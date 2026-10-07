@@ -136,7 +136,30 @@ function iterative(sample: (x: number) => Sample, first?: number, second?: numbe
     if (point && !points.some((p) => p.x === x)) { points.push(point); allZero &&= point.residual === 0 }
     return point
   }
-  add(a); add(b)
+  function solveBracket(bounds: [Sample, Sample]): number | undefined {
+    let [lo, hi] = bounds
+    for (let iteration = 0; iteration < 160; iteration++) {
+      const width = hi.x - lo.x
+      const ratio = lo.residual / (lo.residual - hi.residual)
+      const secant = lo.x + width * ratio
+      const x = Number.isFinite(secant) && secant > lo.x + width * 0.1 && secant < hi.x - width * 0.1 ? secant : lo.x / 2 + hi.x / 2
+      const point = safe(x)
+      if (!point) break // A domain gap is not evidence of a root.
+      if (verified(point)) return point.x
+      if (x === lo.x || x === hi.x) break
+      if (Math.sign(point.residual) === Math.sign(lo.residual)) lo = point
+      else hi = point
+    }
+  }
+  const firstPoint = add(a), secondPoint = add(b)
+  // A user-supplied sign-changing bracket takes precedence over all outside probes.
+  if (first !== undefined && second !== undefined && firstPoint && secondPoint &&
+    firstPoint.residual !== 0 && secondPoint.residual !== 0 && Math.sign(firstPoint.residual) !== Math.sign(secondPoint.residual)) {
+    const bounds: [Sample, Sample] = a < b ? [firstPoint, secondPoint] : [secondPoint, firstPoint]
+    const root = solveBracket(bounds)
+    if (root !== undefined) return root
+    throw new SolverError('search')
+  }
   // Local probes avoid returning an arbitrary estimate for an identity.
   for (const offset of [0.37, -0.61, 1.41, -2.13]) add(center + offset * initialStep)
   if (points.length >= 3 && allZero) throw new SolverError('notUnique')
@@ -151,19 +174,8 @@ function iterative(sample: (x: number) => Sample, first?: number, second?: numbe
     if (exact) return exact.x
     const bounds = bracket()
     if (bounds) {
-      let [lo, hi] = bounds
-      for (let iteration = 0; iteration < 160; iteration++) {
-        const width = hi.x - lo.x
-        const ratio = lo.residual / (lo.residual - hi.residual)
-        const secant = lo.x + width * ratio
-        const x = Number.isFinite(secant) && secant > lo.x + width * 0.1 && secant < hi.x - width * 0.1 ? secant : lo.x / 2 + hi.x / 2
-        const point = safe(x)
-        if (!point) break // A domain gap is not evidence of a root.
-        if (verified(point)) return point.x
-        if (x === lo.x || x === hi.x) break
-        if (Math.sign(point.residual) === Math.sign(lo.residual)) lo = point
-        else hi = point
-      }
+      const root = solveBracket(bounds)
+      if (root !== undefined) return root
     }
     // Bounded secant steps also allow roots without a sign change.
     const best = [...points].sort((p, q) => Math.abs(p.residual) / p.scale - Math.abs(q.residual) / q.scale)

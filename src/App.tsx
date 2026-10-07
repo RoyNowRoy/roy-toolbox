@@ -1,121 +1,93 @@
-import { useState } from 'react'
-import heroImg from './assets/hero.png'
-import reactLogo from './assets/react.svg'
-import viteLogo from './assets/vite.svg'
+import { useRef, useState } from 'react'
+import { toolCategories, tools } from './tools/registry'
 import './App.css'
 
 function App() {
-  const [count, setCount] = useState(0)
+  const [category, setCategory] = useState<string | null>(null)
+  const [activeToolId, setActiveToolId] = useState<string | null>(null)
+  const mainRef = useRef<HTMLElement>(null)
+  const activeTool = tools.find((tool) => tool.id === activeToolId)
+  const ToolComponent = activeTool?.component
+  const visibleTools = tools.filter((tool) => !category || tool.category === category)
+
+  function navigate(toolId: string | null, nextCategory: string | null = null) {
+    setActiveToolId(toolId)
+    setCategory(nextCategory)
+    mainRef.current?.focus()
+  }
 
   return (
-    <>
-      <section id="center">
-        <div className="hero">
-          <img src={heroImg} className="base" width="170" height="179" alt="" />
-          <img src={reactLogo} className="framework" alt="React logo" />
-          <img src={viteLogo} className="vite" alt="Vite logo" />
-        </div>
-        <div>
-          <h1>Get started</h1>
-          <p>
-            Edit <code>src/App.tsx</code> and save to test <code>HMR</code>
-          </p>
-        </div>
-        <button
-          type="button"
-          className="counter"
-          onClick={() => setCount((count) => count + 1)}
-        >
-          Count is {count}
+    <div className="app-shell">
+      <a className="skip-link" href="#main-content">Skip to content</a>
+      <header className="header">
+        <button className="brand" onClick={() => navigate(null)} aria-label="Roy Toolbox home">
+          <span className="brand-mark" aria-hidden="true">R<span>.</span></span>
+          Roy Toolbox
         </button>
-      </section>
-
-      <div className="ticks"></div>
-
-      <section id="next-steps">
-        <div id="docs">
-          <svg className="icon" role="presentation" aria-hidden="true">
-            <use href="/icons.svg#documentation-icon"></use>
-          </svg>
-          <h2>Documentation</h2>
-          <p>Your questions, answered</p>
-          <ul>
-            <li>
-              <a href="https://vite.dev/" target="_blank">
-                <img className="logo" src={viteLogo} alt="" />
-                Explore Vite
-              </a>
-            </li>
-            <li>
-              <a href="https://react.dev/" target="_blank">
-                <img className="button-icon" src={reactLogo} alt="" />
-                Learn more
-              </a>
-            </li>
-          </ul>
-        </div>
-        <div id="social">
-          <svg className="icon" role="presentation" aria-hidden="true">
-            <use href="/icons.svg#social-icon"></use>
-          </svg>
-          <h2>Connect with us</h2>
-          <p>Join the Vite community</p>
-          <ul>
-            <li>
-              <a href="https://github.com/vitejs/vite" target="_blank">
-                <svg
-                  className="button-icon"
-                  role="presentation"
-                  aria-hidden="true"
-                >
-                  <use href="/icons.svg#github-icon"></use>
-                </svg>
-                GitHub
-              </a>
-            </li>
-            <li>
-              <a href="https://chat.vite.dev/" target="_blank">
-                <svg
-                  className="button-icon"
-                  role="presentation"
-                  aria-hidden="true"
-                >
-                  <use href="/icons.svg#discord-icon"></use>
-                </svg>
-                Discord
-              </a>
-            </li>
-            <li>
-              <a href="https://x.com/vite_js" target="_blank">
-                <svg
-                  className="button-icon"
-                  role="presentation"
-                  aria-hidden="true"
-                >
-                  <use href="/icons.svg#x-icon"></use>
-                </svg>
-                X.com
-              </a>
-            </li>
-            <li>
-              <a href="https://bsky.app/profile/vite.dev" target="_blank">
-                <svg
-                  className="button-icon"
-                  role="presentation"
-                  aria-hidden="true"
-                >
-                  <use href="/icons.svg#bluesky-icon"></use>
-                </svg>
-                Bluesky
-              </a>
-            </li>
-          </ul>
-        </div>
-      </section>
-
-      <div className="ticks"></div>
-      <section id="spacer"></section>
-    </>
+        <span className="header-note">Small tools. Everyday clarity.</span>
+      </header>
+      <aside className="sidebar">
+        <p className="nav-label">WORKSPACE</p>
+        <nav aria-label="Tool navigation">
+          <button className={`nav-item ${!activeTool && !category ? 'selected' : ''}`}
+            aria-current={!activeTool && !category ? 'page' : undefined}
+            onClick={() => navigate(null)}>
+            <span aria-hidden="true">⌂</span> Home
+            <span className="nav-count">{tools.length}</span>
+          </button>
+          <p className="nav-label category-label">CATEGORIES</p>
+          {toolCategories.map((name) => (
+            <button key={name}
+              className={`nav-item ${category === name || activeTool?.category === name ? 'selected' : ''}`}
+              aria-current={category === name || activeTool?.category === name ? 'page' : undefined}
+              onClick={() => navigate(null, name)}>
+              <span aria-hidden="true">Aa</span> {name}
+              <span className="nav-count">{tools.filter((tool) => tool.category === name).length}</span>
+            </button>
+          ))}
+        </nav>
+        <div className="sidebar-note"><span className="status-dot" /> Made for your everyday work.</div>
+      </aside>
+      <main id="main-content" className="main-content" ref={mainRef} tabIndex={-1}>
+        {activeTool && ToolComponent ? (
+          <>
+            <button className="back-button" onClick={() => navigate(null)}>← Back to Home</button>
+            <div className="page-heading">
+              <p className="eyebrow">{activeTool.category}</p>
+              <h1>{activeTool.name}</h1>
+              <p className="page-description">{activeTool.description}</p>
+            </div>
+            <ToolComponent />
+          </>
+        ) : (
+          <>
+            <div className="page-heading home-heading">
+              <p className="eyebrow">YOUR EVERYDAY TOOLKIT</p>
+              <h1>A little less busywork.</h1>
+              <p className="page-description">Simple, focused tools to help you get things done.<br />Pick a tool and make room for what matters.</p>
+            </div>
+            <section aria-labelledby="tools-heading">
+              <div className="section-heading">
+                <h2 id="tools-heading">{category ?? 'All tools'}</h2>
+                <span>{visibleTools.length} {visibleTools.length === 1 ? 'tool' : 'tools'}</span>
+              </div>
+              <div className="tool-grid">
+                {visibleTools.map((tool) => (
+                  <button key={tool.id} className="tool-card" onClick={() => navigate(tool.id)}>
+                    <span className="tool-icon" aria-hidden="true">Aa</span>
+                    <span className="tool-category">{tool.category}</span>
+                    <span className="tool-name">{tool.name}</span>
+                    <span className="tool-description">{tool.description}</span>
+                    <span className="card-action">Open tool <span aria-hidden="true">↗</span></span>
+                  </button>
+                ))}
+              </div>
+            </section>
+            <p className="home-note">A growing collection, one useful tool at a time.</p>
+          </>
+        )}
+      </main>
+    </div>
   )
 }
 

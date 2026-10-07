@@ -96,3 +96,10 @@ h1 { font-size: clamp(30px, 3.5vw, 46px); line-height: 1.2; font-weight: 650; le
   .counter-stats div { padding: 12px 8px; }
   .counter-stats dd { font-size: 24px; }
 }
+
+.tvm-fix-options { display: flex; }
+.tvm-fix-options button { padding: 5px 10px; border: 1px solid #dbe4dc; background: #fbfcfa; color: #22332f; font: inherit; font-size: 13px; cursor: pointer; }
+.tvm-fix-options button + button { border-left: 0; }
+.tvm-fix-options button:first-child { border-radius: 6px 0 0 6px; }
+.tvm-fix-options button:last-child { border-radius: 0 6px 6px 0; }
+.tvm-fix-options button[aria-pressed='true'] { background: #245c49; color: white; }

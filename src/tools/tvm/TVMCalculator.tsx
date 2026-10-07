@@ -3,8 +3,8 @@ import { useLanguage } from '../../i18n/language'
 import type { Localized } from '../../i18n/language'
 import { formatValue, parseValue, solveTVM } from './tvm'
 import { variables } from './types'
-import { calculateAmortization, formatMoney } from './amortization'
-import type { AmortizationBlock, AmortizationError } from './amortization'
+import { calculateAmortization } from './amortization'
+import type { AmortizationBlock, AmortizationError, FixDigits } from './amortization'
 import type { ErrorCode, Field, Timing, TVMValues, Variable } from './types'
 
 const errors: Localized<Record<ErrorCode, string>> = {
@@ -39,25 +39,25 @@ const errors: Localized<Record<ErrorCode, string>> = {
 const copy = {
   zh: {
     calculate: '计算', restart: '重新开始', range: '当前付款范围', before: '尚未计算，下一笔为付款 1', table: '摊销表',
-    amrtHelp: 'AMRT 将付款分为利息和本金。#P 为当前块的付款笔数；INT 为块利息，PRIN 为块本金，BAL 为期末余额。NEXT 从下一笔继续；修改 #P 只影响下一块。重新开始返回付款 1，不清除 TVM 值。AMRT 按四位小数逐期舍入，与 HP 17bII+ FIX 4 行为一致；TVM Core 保留原有的更高内部精度。',
+    amrtHelp: 'AMRT 将付款分为利息和本金。#P 为当前块的付款笔数；INT 为块利息，PRIN 为块本金，BAL 为期末余额。NEXT 从下一笔继续；修改 #P 只影响下一块。重新开始返回付款 1，不清除 TVM 值。AMRT 按所选 FIX 精度逐期舍入；改变 FIX 会改变 AMRT 结果并重新开始。',
     solve: '求解', clear: '清除', timing: '付款时点', help: '使用说明',
     intro: '输入四个变量，设置 P/YR 和 BEGIN/END，再点击未知变量旁的“求解”。',
     purpose: 'TVM 根据现金流和复利关系求解 N、I%YR、PV、PMT、FV 中的任意一项。',
     definitions: ['N：付款期数，不是年数；允许数学上有效的小数期数。', 'I%YR：名义年利率，单位为百分比。每期利率 = I%YR / 100 / P/YR。', 'PV：现值。', 'PMT：每期付款金额。', 'FV：终值。', 'P/YR：每年的付款期数，必须是正整数。', 'END：每期末付款。', 'BEGIN：每期初付款。', '+ 表示收到的钱；− 表示付出的钱。'],
     example: '示例：30 年按月还款的贷款',
-    instruction: '输入下列数值，再求解 PMT。显示结果为 -1206.9339。贷款本金是收到的钱（+PV），还款是付出的钱（−PMT）。',
-    precision: '界面最多显示四位小数；求解结果保留完整内部精度。手动编辑后使用重新提交的数值。',
+    instruction: '输入下列数值，再求解 PMT。FIX 4 显示结果为 -1206.9339。贷款本金是收到的钱（+PV），还款是付出的钱（−PMT）。',
+    precision: 'FIX 控制 TVM 显示的小数位数，计算保留完整内部精度。手动提交值独立于显示保存；编辑后替换原有值。',
   },
   en: {
     calculate: 'Calculate', restart: 'Restart', range: 'Current payment range', before: 'No block calculated; next is payment 1', table: 'Amortization table',
-    amrtHelp: 'AMRT splits payments into interest and principal. #P is the number of payments in the current block; INT is block interest, PRIN is block principal, and BAL is the ending balance. NEXT continues with the next payment; changing #P affects only the next block. Restart returns to payment 1 without clearing TVM values. AMRT uses sequential four-decimal monetary rounding, matching HP 17bII+ FIX 4 behavior; TVM Core retains its existing higher internal precision.',
+    amrtHelp: 'AMRT splits payments into interest and principal. #P is the number of payments in the current block; INT is block interest, PRIN is block principal, and BAL is the ending balance. NEXT continues with the next payment; changing #P affects only the next block. Restart returns to payment 1 without clearing TVM values. AMRT uses the selected FIX precision for sequential monetary rounding; changing FIX changes AMRT results and restarts AMRT.',
     solve: 'Solve', clear: 'Clear', timing: 'Payment timing', help: 'How to use',
     intro: 'Enter four variables, set P/YR and BEGIN/END, then select Solve beside the unknown variable.',
     purpose: 'TVM uses cash flows and compound interest to solve any one of N, I%YR, PV, PMT, and FV.',
     definitions: ['N: number of payment periods, not years; mathematically valid fractional periods are allowed.', 'I%YR: nominal annual interest rate in percent. Periodic rate = I%YR / 100 / P/YR.', 'PV: present value.', 'PMT: payment per period.', 'FV: future value.', 'P/YR: payment periods per year; must be a positive integer.', 'END: payment at the end of each period.', 'BEGIN: payment at the beginning of each period.', '+ means money received; − means money paid.'],
     example: 'Example: a 30-year monthly loan',
-    instruction: 'Enter the values below and solve PMT. The displayed result is -1206.9339. Loan proceeds are received (+PV), while repayments are money paid (−PMT).',
-    precision: 'The interface displays up to four decimals; solved values retain full internal precision. Manual edits use the newly committed value.',
+    instruction: 'Enter the values below and solve PMT. At FIX 4, the displayed result is -1206.9339. Loan proceeds are received (+PV), while repayments are money paid (−PMT).',
+    precision: 'FIX controls displayed TVM decimals; calculations retain full internal precision. Manual committed values are stored independently of display; editing replaces the previous value.',
   },
 }
 
@@ -69,11 +69,21 @@ const amrtVariables: Variable[] = ['PV', 'I%YR', 'PMT']
 
 const emptyFields = (): Record<Variable, Field> => ({ N: { text: '' }, 'I%YR': { text: '' }, PV: { text: '' }, PMT: { text: '' }, FV: { text: '' } })
 
-// Solved precision survives commits until the first manual edit removes it.
+function formatFixed(value: number, digits: FixDigits): string {
+  if (!Number.isFinite(value)) return ''
+  const formatted = new Intl.NumberFormat('en-US', {
+    useGrouping: false, minimumFractionDigits: digits, maximumFractionDigits: digits,
+  }).format(value)
+  return Number(formatted) === 0 ? formatted.replace(/^-/, '') : formatted
+}
+
+// Committed values survive display changes until an actual manual edit removes them.
 function commit(field: Field): Field {
   if (field.precise !== undefined) return field
   const parsed = parseValue(field.text)
-  return parsed.ok ? { text: formatValue(parsed.value) } : field
+  if (!parsed.ok) return field
+  const text = formatValue(parsed.value)
+  return { text, precise: Number(text) }
 }
 
 export default function TVMCalculator() {
@@ -81,6 +91,7 @@ export default function TVMCalculator() {
   const labels = copy[language]
   const [fields, setFields] = useState(emptyFields)
   const [frequency, setFrequency] = useState<Field>({ text: '12' })
+  const [fix, setFix] = useState<FixDigits>(4)
   const [timing, setTiming] = useState<Timing>('END')
   const [error, setError] = useState<ErrorCode | null>(null)
   const [solved, setSolved] = useState<Variable | null>(null)
@@ -92,6 +103,9 @@ export default function TVMCalculator() {
   const parsedDefault = parseValue(frequency.text)
   const defaultSize = parsedDefault.ok && Number.isInteger(parsedDefault.value) && parsedDefault.value >= 1 && parsedDefault.value <= 1200 ? String(parsedDefault.value) : '12'
   const countText = blockSizeEdited ? blockSize : defaultSize
+
+  const displayField = (field: Field) => field.precise === undefined ? field.text : formatFixed(field.precise, fix)
+  const formatMoney = (value: number) => formatFixed(value, fix)
 
   function restartAmrt() {
     setBlock(null)
@@ -110,7 +124,7 @@ export default function TVMCalculator() {
     if (!parsedFrequency.ok) { setAmrtError(parsedFrequency.error); return }
     const parsedCount = parseValue(countText)
     if (!parsedCount.ok) { setAmrtError('blockSize'); return }
-    const result = calculateAmortization({ PV: values.PV!, PMT: values.PMT!, annualRate: values['I%YR']!, frequency: parsedFrequency.value, timing }, parsedCount.value, block)
+    const result = calculateAmortization({ PV: values.PV!, PMT: values.PMT!, annualRate: values['I%YR']!, frequency: parsedFrequency.value, timing, digits: fix }, parsedCount.value, block)
     if (!result.ok) { setAmrtError(result.error); return }
     setBlock(result.block)
     setAmrtError(null)
@@ -167,11 +181,18 @@ export default function TVMCalculator() {
               onChange={() => { setTiming(value); setError(null); setSolved(null); restartAmrt() }} /> {value}
           </label>)}
         </fieldset>
+        <fieldset className="tvm-fix"><legend>FIX</legend>
+          <div className="tvm-fix-options">
+            {([0, 1, 2, 3, 4] as const).map((digits) => <button key={digits} type="button"
+              aria-label={`FIX ${digits}`} aria-pressed={fix === digits}
+              onClick={() => { if (fix !== digits) { setFix(digits); restartAmrt() } }}>{digits}</button>)}
+          </div>
+        </fieldset>
       </div>
       <div className="tvm-fields">
         {variables.map((variable) => <div className="tvm-row" key={variable}>
           <label htmlFor={`tvm-${variable}`}>{variable}</label>
-          <input id={`tvm-${variable}`} type="text" inputMode="decimal" value={fields[variable].text}
+          <input id={`tvm-${variable}`} type="text" inputMode="decimal" value={displayField(fields[variable])}
             aria-describedby="tvm-status"
             onChange={(event) => {
               setFields((current) => ({ ...current, [variable]: { text: event.target.value } }))
@@ -183,7 +204,7 @@ export default function TVMCalculator() {
         </div>)}
       </div>
       <p id="tvm-status" className={error ? 'tvm-error' : 'tvm-status'} role="status" aria-live="polite">
-        {error ? errors[language][error] : solved ? `${solved} = ${fields[solved].text}` : ''}
+        {error ? errors[language][error] : solved ? `${solved} = ${displayField(fields[solved])}` : ''}
       </p>
       <section className="amrt-section" aria-label="AMRT">
         <h2>AMRT</h2>

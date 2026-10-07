@@ -3,6 +3,8 @@ import { useLanguage } from '../../i18n/language'
 import type { Localized } from '../../i18n/language'
 import { formatValue, parseValue, solveTVM } from './tvm'
 import { variables } from './types'
+import { calculateAmortization, formatMoney } from './amortization'
+import type { AmortizationBlock, AmortizationError } from './amortization'
 import type { ErrorCode, Field, Timing, TVMValues, Variable } from './types'
 
 const errors: Localized<Record<ErrorCode, string>> = {
@@ -36,6 +38,8 @@ const errors: Localized<Record<ErrorCode, string>> = {
 
 const copy = {
   zh: {
+    calculate: '计算', restart: '重新开始', range: '当前付款范围', before: '尚未计算，下一笔为付款 1', table: '摊销表',
+    amrtHelp: 'AMRT 将付款分为利息和本金。#P 为当前块的付款笔数；INT 为块利息，PRIN 为块本金，BAL 为期末余额。NEXT 从下一笔继续；修改 #P 只影响下一块。重新开始返回付款 1，不清除 TVM 值。AMRT 按四位小数逐期舍入，与 HP 17bII+ FIX 4 行为一致；TVM Core 保留原有的更高内部精度。',
     solve: '求解', clear: '清除', timing: '付款时点', help: '使用说明',
     intro: '输入四个变量，设置 P/YR 和 BEGIN/END，再点击未知变量旁的“求解”。',
     purpose: 'TVM 根据现金流和复利关系求解 N、I%YR、PV、PMT、FV 中的任意一项。',
@@ -45,6 +49,8 @@ const copy = {
     precision: '界面最多显示四位小数；求解结果保留完整内部精度。手动编辑后使用重新提交的数值。',
   },
   en: {
+    calculate: 'Calculate', restart: 'Restart', range: 'Current payment range', before: 'No block calculated; next is payment 1', table: 'Amortization table',
+    amrtHelp: 'AMRT splits payments into interest and principal. #P is the number of payments in the current block; INT is block interest, PRIN is block principal, and BAL is the ending balance. NEXT continues with the next payment; changing #P affects only the next block. Restart returns to payment 1 without clearing TVM values. AMRT uses sequential four-decimal monetary rounding, matching HP 17bII+ FIX 4 behavior; TVM Core retains its existing higher internal precision.',
     solve: 'Solve', clear: 'Clear', timing: 'Payment timing', help: 'How to use',
     intro: 'Enter four variables, set P/YR and BEGIN/END, then select Solve beside the unknown variable.',
     purpose: 'TVM uses cash flows and compound interest to solve any one of N, I%YR, PV, PMT, and FV.',
@@ -54,6 +60,12 @@ const copy = {
     precision: 'The interface displays up to four decimals; solved values retain full internal precision. Manual edits use the newly committed value.',
   },
 }
+
+const amrtErrors: Localized<Record<AmortizationError, string>> = {
+  zh: { finite: '金额超出可安全计算范围，请检查输入。', frequency: 'P/YR 必须是正整数。', rateDomain: '每期利率必须大于 -100%。', payment: 'PMT 不能为 0。', blockSize: '#P 必须是 1–1200 的整数。' },
+  en: { finite: 'An amount exceeds the safe calculation range. Check your inputs.', frequency: 'P/YR must be a positive integer.', rateDomain: 'The periodic rate must exceed -100%.', payment: 'PMT must not be zero.', blockSize: '#P must be an integer from 1 through 1200.' },
+}
+const amrtVariables: Variable[] = ['PV', 'I%YR', 'PMT']
 
 const emptyFields = (): Record<Variable, Field> => ({ N: { text: '' }, 'I%YR': { text: '' }, PV: { text: '' }, PMT: { text: '' }, FV: { text: '' } })
 
@@ -72,6 +84,37 @@ export default function TVMCalculator() {
   const [timing, setTiming] = useState<Timing>('END')
   const [error, setError] = useState<ErrorCode | null>(null)
   const [solved, setSolved] = useState<Variable | null>(null)
+
+  const [blockSize, setBlockSize] = useState('12')
+  const [blockSizeEdited, setBlockSizeEdited] = useState(false)
+  const [block, setBlock] = useState<AmortizationBlock | null>(null)
+  const [amrtError, setAmrtError] = useState<AmortizationError | ErrorCode | null>(null)
+  const parsedDefault = parseValue(frequency.text)
+  const defaultSize = parsedDefault.ok && Number.isInteger(parsedDefault.value) && parsedDefault.value >= 1 && parsedDefault.value <= 1200 ? String(parsedDefault.value) : '12'
+  const countText = blockSizeEdited ? blockSize : defaultSize
+
+  function restartAmrt() {
+    setBlock(null)
+    setAmrtError(null)
+  }
+
+  function calculateBlock() {
+    const values: Partial<TVMValues> = {}
+    for (const variable of amrtVariables) {
+      const field = commit(fields[variable])
+      const parsed = parseValue(field.text)
+      if (!parsed.ok) { setAmrtError(parsed.error); return }
+      values[variable] = field.precise ?? parsed.value
+    }
+    const parsedFrequency = parseValue(frequency.text)
+    if (!parsedFrequency.ok) { setAmrtError(parsedFrequency.error); return }
+    const parsedCount = parseValue(countText)
+    if (!parsedCount.ok) { setAmrtError('blockSize'); return }
+    const result = calculateAmortization({ PV: values.PV!, PMT: values.PMT!, annualRate: values['I%YR']!, frequency: parsedFrequency.value, timing }, parsedCount.value, block)
+    if (!result.ok) { setAmrtError(result.error); return }
+    setBlock(result.block)
+    setAmrtError(null)
+  }
 
   function solve(target: Variable) {
     const next = { ...fields }
@@ -97,6 +140,7 @@ export default function TVMCalculator() {
     setFields({ ...next, [target]: { text: formatValue(result.value), precise: result.value } })
     setError(null)
     setSolved(target)
+    if (amrtVariables.includes(target)) restartAmrt()
   }
 
   return (
@@ -104,13 +148,13 @@ export default function TVMCalculator() {
       <div className="input-heading">
         <p>{labels.intro}</p>
         <button className="clear-button" onClick={() => {
-          setFields(emptyFields()); setFrequency({ text: '12' }); setTiming('END'); setError(null); setSolved(null)
+          setFields(emptyFields()); setFrequency({ text: '12' }); setTiming('END'); setError(null); setSolved(null); restartAmrt(); setBlockSizeEdited(false)
         }}>{labels.clear}</button>
       </div>
       <div className="tvm-settings">
         <label htmlFor="tvm-frequency">P/YR
           <input id="tvm-frequency" type="text" inputMode="numeric" value={frequency.text}
-            onChange={(event) => { setFrequency({ text: event.target.value }); setError(null); setSolved(null) }}
+            onChange={(event) => { setFrequency({ text: event.target.value }); setError(null); setSolved(null); restartAmrt() }}
             onBlur={() => {
               const parsed = parseValue(frequency.text)
               if (parsed.ok && parsed.value > 0 && Number.isInteger(parsed.value)) setFrequency(commit(frequency))
@@ -120,7 +164,7 @@ export default function TVMCalculator() {
         <fieldset><legend>{labels.timing}</legend>
           {(['END', 'BEGIN'] as const).map((value) => <label key={value}>
             <input type="radio" name="tvm-timing" checked={timing === value}
-              onChange={() => { setTiming(value); setError(null); setSolved(null) }} /> {value}
+              onChange={() => { setTiming(value); setError(null); setSolved(null); restartAmrt() }} /> {value}
           </label>)}
         </fieldset>
       </div>
@@ -132,6 +176,7 @@ export default function TVMCalculator() {
             onChange={(event) => {
               setFields((current) => ({ ...current, [variable]: { text: event.target.value } }))
               setError(null); setSolved(null)
+              if (amrtVariables.includes(variable)) restartAmrt()
             }}
             onBlur={() => setFields((current) => ({ ...current, [variable]: commit(current[variable]) }))} />
           <button className="clear-button" aria-label={`${labels.solve} ${variable}`} onClick={() => solve(variable)}>{labels.solve}</button>
@@ -140,6 +185,41 @@ export default function TVMCalculator() {
       <p id="tvm-status" className={error ? 'tvm-error' : 'tvm-status'} role="status" aria-live="polite">
         {error ? errors[language][error] : solved ? `${solved} = ${fields[solved].text}` : ''}
       </p>
+      <section className="amrt-section" aria-label="AMRT">
+        <h2>AMRT</h2>
+        <div className="tvm-settings amrt-controls">
+          <label htmlFor="amrt-count">#P
+            <input id="amrt-count" type="text" inputMode="numeric" value={countText}
+              onChange={(event) => { setBlockSize(event.target.value); setBlockSizeEdited(true); setAmrtError(null) }} />
+          </label>
+          <button className="clear-button" disabled={block !== null} onClick={calculateBlock}>{labels.calculate}</button>
+          <button className="clear-button" disabled={block === null} onClick={calculateBlock}>NEXT</button>
+          <button className="clear-button" onClick={restartAmrt}>{labels.restart}</button>
+        </div>
+        <p className="tvm-status" role="status" aria-live="polite">
+          {labels.range}: {block ? `${block.rows[0].number}–${block.cursor}` : labels.before}
+        </p>
+        {amrtError && <p className="tvm-error" role="alert">{amrtError === 'missing' ? (language === 'zh' ? '请填写 PV、I%YR、PMT 和 P/YR。' : 'Enter PV, I%YR, PMT, and P/YR.') : { ...errors[language], ...amrtErrors[language] }[amrtError]}</p>}
+        {block && <>
+          <dl className="counter-stats amrt-stats">
+            <div><dt>INT</dt><dd>{formatMoney(block.interest)}</dd></div>
+            <div><dt>PRIN</dt><dd>{formatMoney(block.principal)}</dd></div>
+            <div><dt>BAL</dt><dd>{formatMoney(block.balance)}</dd></div>
+          </dl>
+          <details className="counter-help">
+            <summary>{labels.table}</summary>
+            <div className="amrt-table-scroll" tabIndex={0} role="region" aria-label={labels.table}>
+              <table className="amrt-table">
+                <thead><tr>{['#', 'PMT', 'INT', 'PRIN', 'BAL'].map((heading) => <th key={heading} scope="col">{heading}</th>)}</tr></thead>
+                <tbody>{block.rows.map((row) => <tr key={row.number}>
+                  <th scope="row">{row.number}</th><td>{formatMoney(row.payment)}</td><td>{formatMoney(row.interest)}</td>
+                  <td>{formatMoney(row.principal)}</td><td>{formatMoney(row.balance)}</td>
+                </tr>)}</tbody>
+              </table>
+            </div>
+          </details>
+        </>}
+      </section>
       <details className="counter-help">
         <summary>{labels.help}</summary>
         <p>{labels.purpose}</p>
@@ -149,6 +229,8 @@ export default function TVMCalculator() {
         <p>N = 360 · I%YR = 9 · PV = 150000 · FV = 0 · P/YR = 12 · END</p>
         <p>{labels.instruction}</p>
         <p>{labels.precision}</p>
+        <p><strong>AMRT</strong></p>
+        <p>{labels.amrtHelp}</p>
       </details>
     </section>
   )

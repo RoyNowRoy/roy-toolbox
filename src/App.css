@@ -70,6 +70,15 @@ h1 { font-size: clamp(30px, 3.5vw, 46px); line-height: 1.2; font-weight: 650; le
 .tvm-status, .tvm-error { min-height: 24px; margin: 18px 0 12px; font-size: 13px; overflow-wrap: anywhere; }
 .tvm-status { color: #245c49; }
 .tvm-error { color: #a43832; }
+.solver-formula-state { margin: 0 0 12px; color: #245c49; font-size: 14px; font-weight: 650; overflow-wrap: anywhere; }
+.solver-formula-modified { color: #795000; }
+.solver-alert { margin: 16px 0; padding: 14px 16px; border: 1px solid; border-left-width: 5px; border-radius: 8px; overflow-wrap: anywhere; }
+.solver-alert strong { display: block; font-size: 15px; }
+.solver-alert p { margin: 6px 0 0; font-size: 14px; line-height: 1.6; white-space: pre-line; }
+.solver-alert-error { background: #fff0ef; border-color: #b3312b; color: #84251f; }
+.solver-alert-warning { background: #fff7df; border-color: #b07a15; color: #715000; }
+.tvm-panel input[aria-invalid='true'] { border: 2px solid #b3312b; background: #fff0ef; }
+.tvm-panel input[aria-invalid='true']:focus { outline: 2px solid #b3312b; outline-offset: 2px; }
 .amrt-section { margin: 24px 0; padding-top: 20px; border-top: 1px solid #dbe4dc; }
 .amrt-section h2 { font-size: 18px; margin: 0; }
 .amrt-controls { gap: 12px; }

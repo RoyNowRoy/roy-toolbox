@@ -12,7 +12,12 @@ import type { SolverData, StorageIssue } from './storage'
 const copy = {
   zh: {
     equation: '方程', apply: '应用方程', active: '当前方程', solve: '求解', clear: '清除当前变量', advanced: '高级求解',
-    catalog: '公式库', new: '新建', save: '保存', delete: '删除', name: '公式名称', unsaved: '未保存公式', clearAll: '清除全部共享变量',
+    catalog: '公式库', new: '新建', saveNew: '保存为新公式', saveCopy: '另存为新公式', update: '更新此公式', delete: '删除', name: '公式名称', unsaved: '未保存公式', clearAll: '清除全部共享变量',
+    saved: (name: string) => `已保存：${name}`, modified: (name: string) => `已修改，尚未保存：${name}`,
+    updateConfirm: (name: string) => `确认更新公式？\n\n将更新已保存公式“${name}”。\n原公式定义将被替换。`,
+    editingTitle: '正在修改已保存公式', editingWarning: (name: string) => `你正在编辑已保存公式“${name}”。“更新此公式”将替换或重命名该公式；“另存为新公式”将保留“${name}”，并创建独立的新公式。`,
+    saveError: '无法保存公式', applyError: '无法应用方程', solveError: '无法求解', storageError: '本地存储异常',
+    duplicateMessage: (name: string) => `名称“${name}”已经存在。\n现有公式没有被覆盖。\n请修改公式名称，或从公式库打开“${name}”后使用“更新此公式”。`,
     discardConfirm: '放弃当前公式名称或方程的未保存修改？', deleteConfirm: '删除当前保存的公式？共享变量将保留。', clearConfirm: '清除全部共享变量？保存的公式将保留。',
     guess1: '估计值 1', guess2: '估计值 2', help: '使用说明', direct: '直接求解', iterative: '迭代求解',
     intro: '输入一个方程，应用后填写已知值，再点击未知变量旁的“求解”。',
@@ -21,7 +26,12 @@ const copy = {
   },
   en: {
     equation: 'Equation', apply: 'Apply', active: 'Active equation', solve: 'Solve', clear: 'Clear Current Values', advanced: 'Advanced Solver',
-    catalog: 'Equation Catalog', new: 'New', save: 'Save', delete: 'Delete', name: 'Formula Name', unsaved: 'Unsaved formula', clearAll: 'Clear All Shared Values',
+    catalog: 'Equation Catalog', new: 'New', saveNew: 'Save as New Formula', saveCopy: 'Save as New Formula', update: 'Update Formula', delete: 'Delete', name: 'Formula Name', unsaved: 'Unsaved Formula', clearAll: 'Clear All Shared Values',
+    saved: (name: string) => `Saved: ${name}`, modified: (name: string) => `Modified, Not Saved: ${name}`,
+    updateConfirm: (name: string) => `Update formula?\n\nThe saved formula "${name}" will be updated.\nIts previous definition will be replaced.`,
+    editingTitle: 'Editing a saved formula', editingWarning: (name: string) => `You are editing the saved formula "${name}". Update Formula will replace or rename it. Save as New Formula will preserve "${name}" and create a separate formula.`,
+    saveError: 'Formula not saved', applyError: 'Equation not applied', solveError: 'Solve failed', storageError: 'Local storage problem',
+    duplicateMessage: (name: string) => `A formula named "${name}" already exists.\nThe existing formula was not overwritten.\nRename this formula, or open "${name}" from the catalog and choose Update Formula.`,
     discardConfirm: 'Discard unsaved changes to this formula name or equation?', deleteConfirm: 'Delete the selected saved formula? Shared values will be kept.', clearConfirm: 'Clear all shared values? Saved formulas will be kept.',
     guess1: 'Guess 1', guess2: 'Guess 2', help: 'How to use', direct: 'Direct Solve', iterative: 'Iterative Solve',
     intro: 'Enter one equation, select Apply, enter known values, then select Solve beside the unknown variable.',
@@ -32,16 +42,44 @@ const copy = {
 const catalogErrors = {
   zh: {
     nameRequired: '请输入公式名称。', nameLength: '公式名称最多 40 个字符。', nameDuplicate: '公式名称已存在（不区分大小写）。',
+    formulaPrefix: '公式名称前缀格式无效：等号前只能有一个括号外的冒号。',
     variablesRequired: '保存的方程必须至少包含一个变量。', storageLoad: '无法读取部分或全部 Solver 存储数据，已使用可用数据继续运行。原存储未被自动覆盖。',
     storageWrite: '无法保存到本地存储；本次更改仍在内存中可用，刷新后可能丢失。',
   },
   en: {
     nameRequired: 'Enter a formula name.', nameLength: 'Formula names must be at most 40 characters.', nameDuplicate: 'This formula name already exists (case-insensitive).',
+    formulaPrefix: 'Invalid formula-name prefix: only one colon outside parentheses is allowed before =.',
     variablesRequired: 'A saved equation must contain at least one variable.', storageLoad: 'Some or all Solver storage could not be loaded. Continuing with available data. Stored data was not automatically overwritten.',
     storageWrite: 'Local storage could not be saved. Changes remain usable in memory but may be lost on reload.',
   },
 }
 type CatalogError = keyof typeof catalogErrors.en
+
+function SolverAlert({ kind, title, message, id }: { kind: 'error' | 'warning'; title: string; message: string; id?: string }) {
+  return <div id={id} className={`solver-alert solver-alert-${kind}`} role={kind === 'error' ? 'alert' : 'status'} aria-live={kind === 'error' ? 'assertive' : 'polite'} aria-atomic="true">
+    <strong>{title}</strong><p>{message}</p>
+  </div>
+}
+
+function equationInput(text: string): { equation: string; name?: string } | { error: CatalogError } {
+  let depth = 0
+  let separator = -1
+  for (let index = 0; index < text.length; index++) {
+    const char = text[index]
+    if (char === '=') break
+    if (char === '(') depth++
+    else if (char === ')') depth--
+    else if (char === ':' && depth === 0) {
+      if (separator !== -1) return { error: 'formulaPrefix' }
+      separator = index
+    }
+  }
+  if (separator === -1) return { equation: text }
+  const name = text.slice(0, separator).trim()
+  if (!name) return { error: 'nameRequired' }
+  if (Array.from(name).length > 40) return { error: 'nameLength' }
+  return { name, equation: text.slice(separator + 1).trim() }
+}
 
 function fieldsFromShared(equation: Equation, shared: Map<string, number>): Record<string, Field> {
   return Object.fromEntries(equation.variables.map((name) => {
@@ -86,6 +124,9 @@ export default function EquationSolver() {
   const [fix, setFix] = useState(4)
   const [error, setError] = useState<ErrorCode | null>(null)
   const [catalogError, setCatalogError] = useState<CatalogError | null>(null)
+  const [duplicateName, setDuplicateName] = useState('')
+  const [errorAction, setErrorAction] = useState<'saveError' | 'applyError' | 'solveError'>('solveError')
+  const nameInput = useRef<HTMLInputElement>(null)
   const [storageIssue, setStorageIssue] = useState<StorageIssue | null>(initial.issue)
   const [solved, setSolved] = useState<{ target: string; method: 'direct' | 'iterative' } | null>(null)
   const display = (field: Field) => !field.edited && field.value !== undefined ? formatFixed(field.value, fix) : field.text
@@ -114,20 +155,28 @@ export default function EquationSolver() {
     activate(formula.equation, parseEquation(formula.equation))
     if (durable.current.activeEquationId !== id) { durable.current.activeEquationId = id; persist() }
   }
-  function saveFormula() {
-    const name = nameDraft.trim()
+  function saveFormula(asNew: boolean) {
+    setErrorAction('saveError')
     setError(null); setCatalogError(null)
+    const input = equationInput(draft)
+    if ('error' in input) { setCatalogError(input.error); return }
+    const name = input.name ?? nameDraft.trim()
     if (!name) { setCatalogError('nameRequired'); return }
     if (Array.from(name).length > 40) { setCatalogError('nameLength'); return }
-    if (catalog.some((entry) => entry.id !== selectedId && entry.name.toLowerCase() === name.toLowerCase())) { setCatalogError('nameDuplicate'); return }
+    if (catalog.some((entry) => (asNew || entry.id !== selectedId) && entry.name.toLowerCase() === name.toLowerCase())) {
+      setDuplicateName(name); setCatalogError('nameDuplicate')
+      setNameDraft(name); setDraft(input.equation); nameInput.current?.focus(); return
+    }
+    if (!asNew && !selected) return
     try {
-      const equation = parseEquation(draft)
+      const equation = parseEquation(input.equation)
       if (!equation.variables.length) { setCatalogError('variablesRequired'); return }
-      const formula = { id: selectedId ?? createEquationId(catalog), name, equation: draft }
-      const equations = selectedId ? catalog.map((entry) => entry.id === selectedId ? formula : entry) : [...catalog, formula]
+      if (!asNew && selected && (selected.name !== name || selected.equation !== input.equation) && !window.confirm(labels.updateConfirm(selected.name))) return
+      const formula = { id: asNew ? createEquationId(catalog) : selected!.id, name, equation: input.equation }
+      const equations = asNew ? [...catalog, formula] : catalog.map((entry) => entry.id === selected!.id ? formula : entry)
       durable.current.equations = equations; durable.current.activeEquationId = formula.id
-      setCatalog(equations); setSelectedId(formula.id); setNameDraft(name)
-      activate(draft, equation); persist()
+      setCatalog(equations); setSelectedId(formula.id); setNameDraft(name); setDraft(input.equation)
+      activate(input.equation, equation); persist()
     } catch (failure) { if (failure instanceof SolverError) setError(failure.code); else throw failure }
   }
   function deleteFormula() {
@@ -151,13 +200,19 @@ export default function EquationSolver() {
     } catch (failure) { if (!(failure instanceof SolverError)) throw failure }
   }
   function apply() {
+    setErrorAction('applyError')
+    setError(null); setCatalogError(null)
+    const input = equationInput(draft)
+    if ('error' in input) { setCatalogError(input.error); return }
     try {
-      const equation = parseEquation(draft)
-      activate(draft, equation)
+      const equation = parseEquation(input.equation)
+      if (input.name !== undefined) { setNameDraft(input.name); setDraft(input.equation) }
+      activate(input.equation, equation)
     } catch (failure) { if (failure instanceof SolverError) setError(failure.code); else throw failure }
   }
   function solve(target: string) {
     if (!active) return
+    setErrorAction('solveError')
     try {
       const values: Values = {}
       const next = { ...fields }
@@ -186,16 +241,25 @@ export default function EquationSolver() {
         <option value="">{labels.unsaved}</option>
         {catalog.map((entry) => <option key={entry.id} value={entry.id}>{entry.name}</option>)}
       </select>
+      <p className={`solver-formula-state${dirty ? ' solver-formula-modified' : ''}`} role="status" aria-live="polite">
+        {selected ? dirty ? labels.modified(selected.name) : labels.saved(selected.name) : labels.unsaved}
+      </p>
       <label htmlFor="solver-name">{labels.name}</label>
       <input id="solver-name" type="text" style={{ width: '100%', margin: '8px 0 12px' }} value={nameDraft}
+        ref={nameInput} aria-invalid={catalogError === 'nameDuplicate' || catalogError === 'nameRequired' || catalogError === 'nameLength'}
+        aria-describedby={catalogError ? 'solver-error' : undefined}
         onChange={(event) => setNameDraft(event.target.value)} autoComplete="off" />
       <div style={{ display: 'flex', flexWrap: 'wrap', gap: 12 }}>
         <button type="button" className="clear-button" onClick={newFormula}>{labels.new}</button>
-        <button type="button" className="clear-button" onClick={saveFormula}>{labels.save}</button>
+        <button type="button" className="clear-button" onClick={() => saveFormula(!selectedId)}>{selectedId ? labels.update : labels.saveNew}</button>
+        {selectedId && <button type="button" className="clear-button" onClick={() => saveFormula(true)}>{labels.saveCopy}</button>}
         <button type="button" className="clear-button" disabled={!selectedId} onClick={deleteFormula}>{labels.delete}</button>
       </div>
     </fieldset>
-    <p className="tvm-error" role="status" aria-live="polite">{storageIssue ? catalogErrors[language][storageIssue] : ''}</p>
+    {dirty && selected && <SolverAlert kind="warning" title={labels.editingTitle} message={labels.editingWarning(selected.name)} />}
+    {storageIssue && <SolverAlert kind="error" title={labels.storageError} message={catalogErrors[language][storageIssue]} />}
+    {(error || catalogError) && <SolverAlert id="solver-error" kind="error" title={labels[errorAction]}
+      message={error ? errors[language][error] : catalogError === 'nameDuplicate' ? labels.duplicateMessage(duplicateName) : catalogErrors[language][catalogError!]} />}
     <form onSubmit={(event) => { event.preventDefault(); apply() }}>
       <div className="input-heading" style={{ marginTop: 20 }}>
         <label htmlFor="solver-equation">{labels.equation}</label>
@@ -224,8 +288,8 @@ export default function EquationSolver() {
         <button className="clear-button" aria-label={`${labels.solve} ${name}`} onClick={() => solve(name)}>{labels.solve}</button>
       </div>)}
     </div>
-    <p id="solver-status" className={error || catalogError ? 'tvm-error' : 'tvm-status'} role="status" aria-live="polite">
-      {error ? errors[language][error] : catalogError ? catalogErrors[language][catalogError] : solved ? `${solved.target} = ${display(fields[solved.target])} · ${labels[solved.method]}` : ''}
+    <p id="solver-status" className="tvm-status" role="status" aria-live="polite">
+      {!error && !catalogError && solved ? `${solved.target} = ${display(fields[solved.target])} · ${labels[solved.method]}` : ''}
     </p>
     <details className="counter-help"><summary>{labels.advanced}</summary>
       <div className="tvm-settings">{guesses.map((text, index) => <label key={index} htmlFor={`solver-guess-${index}`}>
